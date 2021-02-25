@@ -9,10 +9,16 @@ using Microsoft.Azure.Cosmos;
 
 namespace master_index_data_access.datamodel
 {
+    /*
+     * Todo : Create history of changes in index
+     */ 
+
     public class Master
     {
         [JsonProperty(PropertyName = "id")]
         public string Id { get; set; }
+
+        public string MasterId { get; set; }
 
         [JsonProperty(PropertyName = "parititionKey")]
         public string ParititionKey { get; set; }
@@ -46,6 +52,6 @@ namespace master_index_data_access.datamodel
         public string CreatedBy { get; set; }
 
         
-        public string MasterId { get; set; }
+        public string SyntheticMasterId { get; set; }
     }
 }
