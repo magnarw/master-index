@@ -14,6 +14,7 @@ namespace master_index_data_access
     public class CosmosMasterIndexIntegration : IDataStoreIntegration
     {
 
+        private static string Enitiy = "PERSON";
         private static Container _masterIndexContainer;
         private static Container _idRelationContainer;
 
@@ -26,9 +27,23 @@ namespace master_index_data_access
             _idRelationContainer = dbClient.GetContainer(databaseName, idRelationContainerName);
         }
 
-        public async Task AddIdRelation(string synteticMasterId, string system, string systemId, string createdBy)
+        public async Task<DataStoreIntegrationResponse<string>> AddIdRelation(string id, string system, string systemId, string createdBy, string provider)
         {
-            ItemResponse<Master> response = await _masterIndexContainer.ReadItemAsync<Master>(synteticMasterId, new PartitionKey($"PERSON.{synteticMasterId}"));
+
+            var synteticMasterId = "";
+            if(provider!=null)
+            {
+                ItemResponse<MasterIndexRelation> relation  =
+    await _idRelationContainer.ReadItemAsync<MasterIndexRelation>(id, new PartitionKey($"{provider.ToUpper()}.{Enitiy}.{id}"));
+                synteticMasterId = relation.Resource.SyntheticMasterId;
+            }
+            else
+            {
+                synteticMasterId = id; 
+            }
+
+
+            ItemResponse<Master> response = await _masterIndexContainer.ReadItemAsync<Master>(synteticMasterId, new PartitionKey($"{Enitiy}.{synteticMasterId}"));
             var masterIndex = response.Resource;
 
             ItemRequestOptions requestOptions = new ItemRequestOptions { IfMatchEtag = response.ETag };
@@ -49,80 +64,130 @@ namespace master_index_data_access
                 CreatedBy = createdBy,
                 Id = systemId,
                 SyntheticMasterId = response.Resource.Id,
-                ParititionKey = $"{system.ToUpper()}.{systemId}"
+                PartitionKey = $"{system.ToUpper()}.{Enitiy.ToUpper()}.{systemId}"
 
             };
 
             var idRelationIndexReq = await _idRelationContainer.CreateItemAsync<MasterIndexRelation>(indexRelation);
 
+            return new DataStoreIntegrationResponse<string> { QueryCost = response.RequestCharge + idRelationIndexReq .RequestCharge};
+
 
         }
-
-        public async Task<string> CreateMasterIndex(string masterId, string createdBy)
+        public async Task<DataStoreIntegrationResponse<string>> CreateMasterIndex(string masterId, string createdBy)
         {
-            var syntheticMasterId = new Guid().ToString();
-            var masterIndex = new Master
-            {
-                CreatedAt = DateTime.Now,
-                CreatedBy = createdBy,
-                Enitiy = "PERSON",
-                MasterId = masterId,
-                Id = syntheticMasterId,
-                ParititionKey = $"PERSON.{syntheticMasterId}"
-            };
-
+            var syntheticMasterId = Guid.NewGuid().ToString();
+            var masterIndexRelation = CreateMasterIndexRelation(masterId, createdBy, syntheticMasterId);
+            var queryCost = 0.0; 
             try
             {
-                var masterIndexReq = await _masterIndexContainer.CreateItemAsync<Master>(masterIndex);
-
-                if (masterIndexReq.StatusCode == System.Net.HttpStatusCode.OK)
+                var masterIndexRelationResponse = await _idRelationContainer.CreateItemAsync<MasterIndexRelation>(masterIndexRelation);
+                queryCost += masterIndexRelationResponse.RequestCharge;
+                Master masterIndex = CreateMasterIndex(masterId, createdBy, syntheticMasterId);
+                masterIndex.MasterIndex.Add(new MasterIndexRecord
                 {
-                    var indexRelation = new MasterIndexRelation
-                    {
-                        CreatedAt = DateTime.Now,
-                        CreatedBy = createdBy,
-                        Id = masterId,
-                        SyntheticMasterId = syntheticMasterId,
-                        ParititionKey = $"MASTER.{masterId}"
-
-                    };
-                    var idRelationIndexReq = await _idRelationContainer.CreateItemAsync<MasterIndexRelation>(indexRelation);
-                    if (idRelationIndexReq.StatusCode == System.Net.HttpStatusCode.OK)
-                    {
-                        return masterIndex.Id;
-                    }
-               
+                    System = "MASTER",
+                    SystemId = masterId
+                });
+                try
+                {
+                    var masterIndexResponse = await _masterIndexContainer.CreateItemAsync<Master>(masterIndex);
+                    queryCost += masterIndexResponse.RequestCharge;
+                    return new DataStoreIntegrationResponse <string> { ResponseObject = masterIndex.Id , QueryCost = queryCost};
                 }
-
-                throw new Exception($"Could not create index due to status code {masterIndexReq.StatusCode}");
-
+                catch (Exception ex)
+                {
+                    //rollback
+                    var response = await _idRelationContainer.DeleteItemAsync<MasterIndexRelation>(masterId, new PartitionKey(masterIndexRelation.PartitionKey));
+                    throw new Exception($"Could not create master index for {masterId}", ex);
+                }
             }
             catch (CosmosException ex)
             {
-
-                throw ex;
+                if(ex.StatusCode == System.Net.HttpStatusCode.Conflict)
+                {
+                    throw new ArgumentException($"MasterIndex for {masterId} exsits");
+                }
+                else
+                {
+                    throw ex;
+                }
             }
-            catch (Exception ex)
+
+        }
+
+        private static Master CreateMasterIndex(string masterId, string createdBy, string syntheticMasterId)
+        {
+            return new Master
             {
+                CreatedAt = DateTime.Now,
+                CreatedBy = createdBy,
+                Enitiy = Enitiy,
+                MasterId = masterId,
+                Id = syntheticMasterId,
+                PartitionKey = $"{Enitiy}.{syntheticMasterId}",
+                MasterIndex = new List<MasterIndexRecord>()
+            };
+        }
 
-                throw ex;
+        private static MasterIndexRelation CreateMasterIndexRelation(string masterId, string createdBy, string syntheticMasterId)
+        {
+            return new MasterIndexRelation
+            {
+                CreatedAt = DateTime.Now,
+                CreatedBy = createdBy,
+                Id = masterId,
+                SyntheticMasterId = syntheticMasterId,
+                PartitionKey = $"MASTER.{Enitiy}.{masterId}"
+            };
+        }
+
+        public async Task<DataStoreIntegrationResponse<string>> GetIdRelation(string synteticMasterId, string system)
+        {
+            try
+            {
+                ItemResponse<Master> response = await _masterIndexContainer.ReadItemAsync<Master>(synteticMasterId, new PartitionKey($"{Enitiy}.{synteticMasterId}"));
+                return new DataStoreIntegrationResponse<string> { ResponseObject = response.Resource.MasterIndex.Find(x => x.System.Equals(system)).SystemId, QueryCost = response.RequestCharge };
+
+            }catch(CosmosException exp)
+            {
+                if (exp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    throw new ArgumentException($"Could not find system id for {system} using synteticMasterId {synteticMasterId}");
+                throw exp;
             }
         }
 
-        public async Task<string> GetIdRelation(string synteticMasterId, string system)
-        {
-            ItemResponse<Master> response = await _masterIndexContainer.ReadItemAsync<Master>(synteticMasterId, new PartitionKey($"PERSON.{synteticMasterId}"));
-            return response.Resource.MasterIndex.Find(x=>x.System.Equals(system)).SystemId;
-        }
 
-        public async Task<string> GetIdRelation(string fromSystem, string fromSystemId, string toSystem)
-        {
-            ItemResponse<MasterIndexRelation> response =
-                await _idRelationContainer.ReadItemAsync<MasterIndexRelation>(fromSystemId, new PartitionKey($"{fromSystem.ToUpper()}.{fromSystem}"));
 
-            var syntheticMasterId = response.Resource.SyntheticMasterId;
-            ItemResponse<Master> masterIndex = await _masterIndexContainer.ReadItemAsync<Master>(syntheticMasterId, new PartitionKey($"PERSON.{syntheticMasterId}"));
-            return masterIndex.Resource.MasterIndex.Find(x => x.System.Equals(toSystem)).SystemId;
+        public async Task<DataStoreIntegrationResponse<string>> GetIdRelation(string fromSystemId, string toSystem, string idProvider = null)
+        {
+
+            try
+            {
+                if(idProvider == null)
+                {
+                    ItemResponse<Master> response = await _masterIndexContainer.ReadItemAsync<Master>(fromSystemId, new PartitionKey($"{Enitiy}.{fromSystemId}"));
+                    return new DataStoreIntegrationResponse<string> { ResponseObject = response.Resource.MasterIndex.Find(x => x.System.Equals(toSystem)).SystemId, QueryCost = response.RequestCharge };
+                }else
+                {
+                    ItemResponse<MasterIndexRelation> responseMaster =
+               await _idRelationContainer.ReadItemAsync<MasterIndexRelation>(fromSystemId, new PartitionKey($"{idProvider.ToUpper()}.{Enitiy}.{fromSystemId}"));
+
+                    var syntheticMasterId = responseMaster.Resource.SyntheticMasterId;
+                    ItemResponse<Master> masterIndex = await _masterIndexContainer.ReadItemAsync<Master>(syntheticMasterId, new PartitionKey($"PERSON.{syntheticMasterId}"));
+                    return new DataStoreIntegrationResponse<string> { QueryCost = masterIndex.RequestCharge+responseMaster.RequestCharge, ResponseObject = masterIndex.Resource.MasterIndex.Find(x => x.System.Equals(toSystem)).SystemId };
+                }
+               
+
+            }
+            catch (CosmosException exp)
+            {
+                if (exp.StatusCode == System.Net.HttpStatusCode.NotFound)
+                    throw new ArgumentException($"Could not find system id for {toSystem} using id {fromSystemId}");
+                throw exp;
+            }
+
+           
         }
     }
 }

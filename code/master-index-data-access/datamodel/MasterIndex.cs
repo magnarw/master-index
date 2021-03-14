@@ -20,8 +20,8 @@ namespace master_index_data_access.datamodel
 
         public string MasterId { get; set; }
 
-        [JsonProperty(PropertyName = "parititionKey")]
-        public string ParititionKey { get; set; }
+        [JsonProperty(PropertyName = "partitionKey")]
+        public string PartitionKey { get; set; }
 
         
         public DateTime CreatedAt { get; set; }
@@ -44,8 +44,8 @@ namespace master_index_data_access.datamodel
         [JsonProperty(PropertyName = "id")]
         public string Id { get; set; }
 
-        [JsonProperty(PropertyName = "parititionKey")]
-        public string ParititionKey { get; set; }
+        [JsonProperty(PropertyName = "partitionKey")]
+        public string PartitionKey { get; set; }
 
         public DateTime CreatedAt { get; set; }
 
@@ -53,5 +53,13 @@ namespace master_index_data_access.datamodel
 
         
         public string SyntheticMasterId { get; set; }
+    }
+
+
+    public class DataStoreIntegrationResponse<T>
+    {
+        public Double QueryCost { get; set; }
+
+        public T ResponseObject { get; set; }
     }
 }

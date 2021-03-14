@@ -6,10 +6,9 @@ namespace master_index_data_access
 {
     public interface IDataStoreIntegration
     {
-        Task<string> CreateMasterIndex(String masterId, String createdBy);
-        Task AddIdRelation(String synteticMasterId, String system, String systemId, String createdBy);
-        Task<String> GetIdRelation(String synteticMasterId, String system);
-        Task<String> GetIdRelation(String fromSystem,String fromSystemId, String toSystem);
+        Task<DataStoreIntegrationResponse<string>> CreateMasterIndex(String masterId, String createdBy);
+        Task<DataStoreIntegrationResponse<String>> AddIdRelation(String id, String system, String systemId, String createdBy, String idprovider = null);
+        Task<DataStoreIntegrationResponse<String>> GetIdRelation(String id, String system, String idProvider = null);
     }
     
 }
